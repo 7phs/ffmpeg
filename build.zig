@@ -3098,6 +3098,8 @@ pub fn build(b: *std.Build) void {
     });
     lib.addConfigHeader(config_components_h);
 
+    create_codec_list(b, b.allocator) catch |err| std.debug.panic("{}", .{err});
+
     const sources = categorizeSources(b.allocator, t, switch (tls) {
         else => tls,
         .libressl => .openssl,
@@ -3310,6 +3312,32 @@ fn categorizeSources(ally: std.mem.Allocator, target: std.Target, tls: Tls) Cate
         @field(result, field.name) = libs[i].list.items;
     }
     return result;
+}
+
+fn create_codec_list(b: *std.Build, lly: std.mem.Allocator) !void {
+    const input_path = try b.path("libavcodec/codec_list.origin.c").getPath3(b, null).toStringZ(lly);
+    const input_file = try std.fs.openFileAbsoluteZ(input_path, .{ .mode = std.fs.File.OpenMode.read_only });
+    defer input_file.close();
+
+    const output_path = try b.path("libavcodec/codec_list.c").getPath3(b, null).toStringZ(lly);
+    const output_file = try std.fs.createFileAbsolute(output_path, .{ .truncate = true });
+
+    var reader = std.io.bufferedReader(input_file.reader());
+    var writer = std.io.bufferedWriter(output_file.writer());
+    defer writer.flush() catch |err| {
+        std.log.err("Error while flushing writer: {}", .{err});
+    };
+
+    const line_buffer = try lly.alloc(u8, 1024);
+    defer lly.free(line_buffer);
+
+    while (reader.reader().readUntilDelimiterOrEof(line_buffer, '\n') catch |err| std.debug.panic("{}", .{err})) |line| {
+        if (line.len == 0) break;
+
+        if (std.mem.indexOf(u8, line, "_v4l2") == null) {
+            try writer.writer().print("{s}\n", .{line});
+        }
+    }
 }
 
 const headers = [_][]const u8{
